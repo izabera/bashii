@@ -1,6 +1,6 @@
 #!/bin/bash
 shopt -s nullglob
-[[ -r $HOME/.iirc ]] && source "$HOME"/.iirc # host, port, nick  (can be set as env variables)
+[[ ! $norc && -r $HOME/.iirc ]] && source "$HOME"/.iirc # host, port, nick
 
 declare -A pids=()
 cleanup () {
