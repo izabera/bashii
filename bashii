@@ -1,0 +1,50 @@
+#!/bin/bash
+shopt -s nullglob
+[[ -r $HOME/.iirc ]] && source "$HOME"/.iirc # host, port, nick  (can be set as env variables)
+
+declare -A pids=()
+cleanup () {
+  (($#)) && rm "fifo$1" && unset pids[$1] && return
+  for i in "${pids[@]}"; do kill "$i"; done
+  rm -f fifo*
+}
+trap 'cleanup' EXIT
+
+join () {
+  mkfifo "fifo$host:$1"
+  while read -r; do printf '/PRIVMSG %s :%s\r\n' "$1" "$REPLY"
+  done < "fifo$host:$1" > "fifo$host" & pids[$1]=$!
+}
+
+exec 3<>"/dev/tcp/$host/$port" || { echo "Connection to $host failed" >&2 ; exit 1; }
+cleanup
+mkfifo "fifo$host"
+printf '/NICK %s\n/USER %s %s %s , %s\n' "$nick" "$nick" "$nick" "$nick" "$nick" > "fifo$host" &
+
+while read -r raw; do
+  read -r sender type target msg <<< "$raw"
+  [[ $sender = PING ]] && printf '/PONG %s\r\n' "${type#?}" > "fifo$host" && continue
+  sender=${sender#?} sender=${sender%%!*} msg=${msg#?}
+  case $type in
+    PRIVMSG) printf '%(%F %T)T <%s> %s\n' -1 "$sender" "$msg" >> "log$host:$target"
+      [[ $target = "$nick" && ! -e fifo$sender ]] && join "$sender" ;;
+    NOTICE) printf '%(%F %T)T *%s* %s\n' -1 "$sender" "$msg" >> "log$host:$target" ;;
+    JOIN) printf '%(%F %T)T --> %s joined %s\n' -1 "$sender" "$target" >> "log$host:$target" ;;
+    PART) printf '%(%F %T)T <-- %s left %s (%s)\n' -1 "$sender" "$target" "$msg" >> "log$host:$target" ;;
+    QUIT) printf '%(%F %T)T --- %s quit (%s)\n' -1 "$sender" "$msg" >> "log$host:$target" ;;
+  esac
+  printf '%(%F %T)T %s\n' -1 "$raw" >> "log$host"
+done <&3 &
+
+while :; do
+  if read -r cmd arg < "fifo$host"; then
+    case ${cmd#?} in
+      j|join|JOIN) printf 'JOIN %s\r\n' "$arg"; join "$arg" ;;
+      msg|q|query|privmsg|PRIVMSG) printf 'PRIVMSG %s :%s\r\n' "${arg%% *}" "${arg#* }"
+        [[ ${pids[${arg%% *}]} ]] || join "${arg%% *}" ;;
+      part|PART) printf 'PART %s\r\n' "$arg"; rm "fifo$host:$arg" 2>/dev/null && cleanup "$arg" ;;
+      quit|QUIT) printf 'QUIT %s\r\n' "$arg" && exit ;;
+      *) printf '%s %s\r\n' "${cmd#?}" "$arg" ;;
+    esac
+  fi
+done >&3
