@@ -19,7 +19,7 @@ join () {
 exec 3<>"/dev/tcp/$host/$port" || { echo "Connection to $host failed" >&2 ; exit 1; }
 cleanup
 mkfifo "fifo$host"
-{ printf '/NICK %s\n' "$nick" ; printf '/USER %s %s %s , %s\n' "$nick"{,,,} ; } > "fifo$host" &
+printf 'NICK %s\r\nUSER %s %s %s , %s\n' "$nick"{,,,,} >&3
 
 while read -r raw; do
   read -r sender type target msg <<< "$raw"
