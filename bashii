@@ -8,18 +8,18 @@ cleanup () {
   for i in "${pids[@]}"; do kill "$i"; done
   rm -f fifo*
 }
-trap 'cleanup' EXIT
+trap cleanup EXIT
 
 join () {
   mkfifo "fifo$host:$1"
-  while read -r; do printf '/PRIVMSG %s :%s\r\n' "$1" "$REPLY"
+  while :; do if read -r; then printf '/PRIVMSG %s %s\r\n' "$1" "$REPLY"; fi
   done < "fifo$host:$1" > "fifo$host" & pids[$1]=$!
 }
 
 exec 3<>"/dev/tcp/$host/$port" || { echo "Connection to $host failed" >&2 ; exit 1; }
 cleanup
 mkfifo "fifo$host"
-printf '/NICK %s\n/USER %s %s %s , %s\n' "$nick" "$nick" "$nick" "$nick" "$nick" > "fifo$host" &
+{ printf '/NICK %s\n' "$nick" ; printf '/USER %s %s %s , %s\n' "$nick"{,,,} ; } > "fifo$host" &
 
 while read -r raw; do
   read -r sender type target msg <<< "$raw"
