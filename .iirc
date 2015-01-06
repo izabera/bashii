@@ -1,7 +1,14 @@
 # sample iirc
+
+# mandatory fields
 nick=bashii
 host=irc.freenode.net
 port=6667
+
+# all the rest
+user=bashii
+mode=0
+realname="$nick is using bashii: an IRC Client written in bash"
 timeformat='%F %T'
 
 # you can now add extra commands here, like:

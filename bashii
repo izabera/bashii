@@ -29,17 +29,16 @@ join () {
 exec 3<>"/dev/tcp/$host/$port" || { echo "Connection to $host failed" >&2 ; exit 1; }
 cleanup
 mkfifo "fifo$host"
-# TODO: proper auth instead of this + add password
-printf 'NICK %s\r\nUSER %s %s %s , %s\n' "$nick"{,,,,} >&3
+printf 'NICK %s\r\nUSER %s %s * :%s\n' "$nick" "${user:+"$nick"}" "${mode:+8}" "${realname:+"$nick"}" >&3
 
 # parse what we get from the server
 while read -r raw; do
   read -r sender type target msg <<< "$raw"
   [[ $sender = PING ]] && printf '/PONG %s\r\n' "${type#?}" > "fifo$host" && continue
-  sender=${sender#?} sender=${sender%%!*} msg=${msg#?} target=${target%$'\r'}
+  sender=${sender#?} sender=${sender%%!*} msg=${msg#?} msg=${msg%$'\r'} target=${target%$'\r'}
   case $type in
     # if $timeformat isn't set, it expands to %()T == %(%T)T
-    PRIVMSG) if [[ $msg = $'\1ACTION'*$'\1' ]]; then
+    PRIVMSG) if [[ $msg = $'\1ACTION'*$'\1' ]]; then msg=${msg#?ACTION} msg=${msg%?}
            printf "%($timeformat)T * %s %s\n" -1 "$sender" "$msg" >> "log$host:$target"
       else printf "%($timeformat)T <%s> %s\n" -1 "$sender" "$msg" >> "log$host:$target"; fi
       [[ $target = "$nick" && ! -e fifo$sender ]] && join "$sender" ;;
@@ -59,8 +58,8 @@ while :; do if read -r cmd arg; then
       msg|q|query|privmsg|PRIVMSG) printf 'PRIVMSG %s :%s\r\n' "${arg%% *}" "${arg#* }"
         printf "%($timeformat)T <%s> %s\n" -1 "$nick" "${arg#* }" >> "log$host:${arg%% *}"
         [[ ${pids[${arg%% *}]} ]] || join "${arg%% *}" ;;
-      part|PART) printf 'PART %s\r\n' "$arg"; rm "fifo$host:$arg" 2>/dev/null && cleanup "$arg" ;;
-      quit|QUIT) printf 'QUIT %s\r\n' "$arg" && exit ;;
+      part|PART) printf 'PART :%s\r\n' "$arg"; rm "fifo$host:$arg" 2>/dev/null && cleanup "$arg" ;;
+      quit|QUIT) printf 'QUIT :%s\r\n' "$arg" && exit ;;
       *) printf '%s %s\r\n' "${cmd#?}" "$arg" ;; # anything else, send raw
     esac
     printf "%($timeformat)T %s %s\n" -1 "${cmd#?}" "$arg" >> "log$host"
