@@ -2,6 +2,7 @@
 nick=bashii
 host=irc.freenode.net
 port=6667
+timeformat='%F %T'
 
 # you can now add extra commands here, like:
 # cd some-directory

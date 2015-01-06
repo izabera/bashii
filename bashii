@@ -1,10 +1,11 @@
 #!/bin/bash
 shopt -s nullglob
-[[ ! $norc && -r $HOME/.iirc ]] && source "$HOME"/.iirc # host, port, nick
+[[ -s ${rc="$HOME/.iirc"} && -r $rc ]] && source "$rc" || # disable rcfile: export rc=
+{ read -r -p 'Nick: ' nick; read -r -p 'Host: ' host; read -r -p 'Port: ' port; }
 
 declare -A pids=()
 cleanup () {
-  (($#)) && rm "fifo$1" && unset pids[$1] && return
+  (($#)) && rm "fifo$1" && unset pids["$1"] && return
   for i in "${pids[@]}"; do kill "$i"; done
   rm -f fifo*
 }
@@ -12,39 +13,53 @@ trap cleanup EXIT
 
 join () {
   mkfifo "fifo$host:$1"
-  while :; do if read -r; then printf '/PRIVMSG %s %s\r\n' "$1" "$REPLY"; fi
-  done < "fifo$host:$1" > "fifo$host" & pids[$1]=$!
+  while :; do if read -r; then
+    # this way we can just send   /msg friend hello   to any fifo
+    # or   //msg friend hello   to send '/msg friend hello' to _that_ fifo
+    if [[ $REPLY = /* && $REPLY != //* ]]; then printf '%s\n' "$REPLY"
+    elif [[ $REPLY = //* ]]; then printf '/PRIVMSG %s %s\r\n' "$1" "${REPLY#?}"
+    else printf '/PRIVMSG %s %s\r\n' "$1" "$REPLY"
+    fi
+  fi
+  done < "fifo$host:$1" > "fifo$host" & pids["$1"]=$!
 }
 
+# open connection, remove untracked fifos
 exec 3<>"/dev/tcp/$host/$port" || { echo "Connection to $host failed" >&2 ; exit 1; }
 cleanup
 mkfifo "fifo$host"
+# TODO: proper auth instead of this + add password
 printf 'NICK %s\r\nUSER %s %s %s , %s\n' "$nick"{,,,,} >&3
 
+# parse what we get from the server
 while read -r raw; do
   read -r sender type target msg <<< "$raw"
   [[ $sender = PING ]] && printf '/PONG %s\r\n' "${type#?}" > "fifo$host" && continue
-  sender=${sender#?} sender=${sender%%!*} msg=${msg#?}
+  sender=${sender#?} sender=${sender%%!*} msg=${msg#?} target=${target%$'\r'}
   case $type in
-    PRIVMSG) printf '%(%F %T)T <%s> %s\n' -1 "$sender" "$msg" >> "log$host:$target"
+    # if $timeformat isn't set, it expands to %()T == %(%T)T
+    PRIVMSG) printf "%($timeformat)T <%s> %s\n" -1 "$sender" "$msg" >> "log$host:$target"
       [[ $target = "$nick" && ! -e fifo$sender ]] && join "$sender" ;;
-    NOTICE) printf '%(%F %T)T *%s* %s\n' -1 "$sender" "$msg" >> "log$host:$target" ;;
-    JOIN) printf '%(%F %T)T --> %s joined %s\n' -1 "$sender" "$target" >> "log$host:$target" ;;
-    PART) printf '%(%F %T)T <-- %s left %s (%s)\n' -1 "$sender" "$target" "$msg" >> "log$host:$target" ;;
-    QUIT) printf '%(%F %T)T --- %s quit (%s)\n' -1 "$sender" "$msg" >> "log$host:$target" ;;
+    NOTICE) printf "%($timeformat)T *%s* %s\n" -1 "$sender" "$msg" >> "log$host:$target" ;;
+    JOIN) printf "%($timeformat)T --> %s joined %s\n" -1 "$sender" "$target" >> "log$host:$target" ;;
+    PART) printf "%($timeformat)T <-- %s left %s (%s)\n" -1 "$sender" "$target" "$msg" >> "log$host:$target" ;;
+    QUIT) printf "%($timeformat)T --- %s quit (%s)\n" -1 "$sender" "$msg" >> "log$host:$target" ;;
+    # TODO: display KICK INVITE MODE...
   esac
-  printf '%(%F %T)T %s\n' -1 "$raw" >> "log$host"
+  printf "%($timeformat)T %s\n" -1 "$raw" >> "log$host" # log everything here
 done <&3 &
 
-while :; do
-  if read -r cmd arg < "fifo$host"; then
+# parse user input
+while :; do if read -r cmd arg; then
     case ${cmd#?} in
       j|join|JOIN) printf 'JOIN %s\r\n' "$arg"; join "$arg" ;;
       msg|q|query|privmsg|PRIVMSG) printf 'PRIVMSG %s :%s\r\n' "${arg%% *}" "${arg#* }"
+        printf "%($timeformat)T <%s> %s\n" -1 "$nick" "${arg#* }" >> "log$host:${arg%% *}"
         [[ ${pids[${arg%% *}]} ]] || join "${arg%% *}" ;;
       part|PART) printf 'PART %s\r\n' "$arg"; rm "fifo$host:$arg" 2>/dev/null && cleanup "$arg" ;;
       quit|QUIT) printf 'QUIT %s\r\n' "$arg" && exit ;;
-      *) printf '%s %s\r\n' "${cmd#?}" "$arg" ;;
+      *) printf '%s %s\r\n' "${cmd#?}" "$arg" ;; # anything else, send raw
     esac
+    printf "%($timeformat)T %s %s\n" -1 "${cmd#?}" "$arg" >> "log$host"
   fi
-done >&3
+done < "fifo$host" >&3
