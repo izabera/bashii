@@ -16,7 +16,8 @@ join () {
   while :; do if read -r; then
     # this way we can just send   /msg friend hello   to any fifo
     # or   //msg friend hello   to send '/msg friend hello' to _that_ fifo
-    if [[ $REPLY = /* && $REPLY != //* ]]; then printf '%s\n' "$REPLY"
+    if [[ $REPLY = '/me '* ]]; then printf '/PRIVMSG %s \1ACTION%s\1\r\n' "$1" "${REPLY#???}"
+    elif [[ $REPLY = /* && $REPLY != //* ]]; then printf '%s\n' "$REPLY"
     elif [[ $REPLY = //* ]]; then printf '/PRIVMSG %s %s\r\n' "$1" "${REPLY#?}"
     else printf '/PRIVMSG %s %s\r\n' "$1" "$REPLY"
     fi
@@ -38,7 +39,9 @@ while read -r raw; do
   sender=${sender#?} sender=${sender%%!*} msg=${msg#?} target=${target%$'\r'}
   case $type in
     # if $timeformat isn't set, it expands to %()T == %(%T)T
-    PRIVMSG) printf "%($timeformat)T <%s> %s\n" -1 "$sender" "$msg" >> "log$host:$target"
+    PRIVMSG) if [[ $msg = $'\1ACTION'*$'\1' ]]; then
+           printf "%($timeformat)T * %s %s\n" -1 "$sender" "$msg" >> "log$host:$target"
+      else printf "%($timeformat)T <%s> %s\n" -1 "$sender" "$msg" >> "log$host:$target"; fi
       [[ $target = "$nick" && ! -e fifo$sender ]] && join "$sender" ;;
     NOTICE) printf "%($timeformat)T *%s* %s\n" -1 "$sender" "$msg" >> "log$host:$target" ;;
     JOIN) printf "%($timeformat)T --> %s joined %s\n" -1 "$sender" "$target" >> "log$host:$target" ;;
